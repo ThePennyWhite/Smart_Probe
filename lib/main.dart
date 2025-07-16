@@ -1,33 +1,54 @@
-import 'package:fl_chart/fl_chart.dart';
-import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'waveform_chart.dart';
-import 'waveform_type.dart';
+import 'class/waveform_type.dart';
+import 'class/datasource_type.dart';
+import 'hid_service.dart';
+import 'mock_hid_service.dart';
 
-void main() => runApp(SmartScopeApp());
+final HidService hid = HidService();
+final MockHidService mockHidService = MockHidService();
 
-class SmartScopeApp extends StatefulWidget {
-  const SmartScopeApp({super.key});
+void main() => runApp(const SmartProbeApp());
 
+class SmartProbeApp extends StatefulWidget {
+  const SmartProbeApp({super.key});
   @override
-  // ignore: library_private_types_in_public_api
-  _SmartScopeAppState createState() => _SmartScopeAppState();
+  _SmartProbeAppState createState() => _SmartProbeAppState();
 }
 
-class _SmartScopeAppState extends State<SmartScopeApp> {
+class _SmartProbeAppState extends State<SmartProbeApp> {
   WaveformType currentType = WaveformType.sine;
+  DataSourceType currentSource = DataSourceType.mouse;
   List<FlSpot> waveform = [];
+
+  Timer? hidTimer;
+  double amplitude = 1.0;
+  double frequency = 3.0;
 
   @override
   void initState() {
     super.initState();
-    setupWaveformTimer();
+    hid.init();
   }
 
-  void setupWaveformTimer() {
-    Timer.periodic(Duration(milliseconds: 100), (_) {
-      final data = generateWaveform(currentType);
+  @override
+  void dispose() {
+    hidTimer?.cancel();
+    hid.dispose();
+    super.dispose();
+  }
+
+  void startHidWaveformTimer() {
+    hidTimer?.cancel();
+    hidTimer = Timer.periodic(Duration(milliseconds: 100), (_) async {
+      final data = mockHidService.readWaveform(
+        currentType,
+        currentSource,
+        amplitude: amplitude,
+        frequency: frequency,
+      );
       setState(() {
         waveform = List.generate(
           data.length,
@@ -37,65 +58,150 @@ class _SmartScopeAppState extends State<SmartScopeApp> {
     });
   }
 
-  List<double> generateWaveform(WaveformType type) {
-    final t = DateTime.now().millisecondsSinceEpoch / 1000.0;
-    return List.generate(64, (i) {
-      final x = t + i / 10;
-      switch (type) {
-        case WaveformType.sine:
-          return sin(3 * x);
-        case WaveformType.square:
-          return sin(3 * x) > 0 ? 1.0 : -1.0;
-        case WaveformType.triangle:
-          return 2 * (x % 1.0) - 1.0;
-        case WaveformType.noise:
-          return Random().nextDouble() * 2 - 1;
-        case WaveformType.fake:
-          return (0.6 * (i % 16) / 16.0 + 0.4 * (i % 4) / 4.0) *
-              (0.8 * sin(t + i / 10) + 0.2 * cos(t + i / 7));
-        default:
-          return 0.0;
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
+    final isMouseMode = currentSource == DataSourceType.mouse;
+
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: Text('Smart Probe Scope')),
+        appBar: AppBar(title: const Text('Smart Probe Scope')),
         body: Column(
           children: [
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: waveform.isNotEmpty
+                child: isMouseMode
+                    ? MouseRegion(
+                        onHover: (event) {
+                          mockHidService.updateMouse(event.localPosition);
+                          final data = mockHidService.readWaveform(
+                            currentType,
+                            currentSource,
+                            amplitude: amplitude,
+                            frequency: frequency,
+                          );
+                          setState(() {
+                            waveform = List.generate(
+                              data.length,
+                              (i) => FlSpot(i.toDouble(), data[i]),
+                            );
+                          });
+                        },
+                        child: WaveformChart(points: waveform),
+                      )
+                    : waveform.isNotEmpty
                     ? WaveformChart(points: waveform)
-                    : Center(
+                    : const Center(
                         child: Text(
-                          '等待模擬資料...',
+                          '等待 Smart Probe 資料...',
                           style: TextStyle(fontSize: 18),
                         ),
                       ),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.only(bottom: 20),
-              child: DropdownButton<WaveformType>(
-                value: currentType,
-                items: WaveformType.values.map((type) {
-                  return DropdownMenuItem(
-                    value: type,
-                    child: Text(type.name.toUpperCase()),
-                  );
-                }).toList(),
-                onChanged: (type) {
-                  if (type != null) {
-                    setState(() => currentType = type);
-                  }
-                },
+              padding: const EdgeInsets.symmetric(
+                horizontal: 6.0,
+                vertical: 4.0,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('波型：', style: TextStyle(fontSize: 16)),
+                        DropdownButton<WaveformType>(
+                          value: currentType,
+                          isExpanded: true,
+                          items: WaveformType.values.map((type) {
+                            return DropdownMenuItem(
+                              value: type,
+                              child: Text(type.name.toUpperCase()),
+                            );
+                          }).toList(),
+                          onChanged: (type) =>
+                              setState(() => currentType = type!),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('資料來源：', style: TextStyle(fontSize: 16)),
+                        Row(
+                          children: DataSourceType.values.map((src) {
+                            final label = src == DataSourceType.mouse
+                                ? '滑鼠模擬'
+                                : 'Smart Probe (HID)';
+                            return Expanded(
+                              child: RadioListTile<DataSourceType>(
+                                title: Text(
+                                  label,
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                                value: src,
+                                groupValue: currentSource,
+                                onChanged: (newSrc) async {
+                                  if (newSrc != null) {
+                                    setState(() {
+                                      currentSource = newSrc;
+                                      waveform = [];
+                                    });
+
+                                    if (newSrc == DataSourceType.hid) {
+                                      final ok = await hid.init();
+                                      if (!ok) return;
+                                      startHidWaveformTimer();
+                                    } else {
+                                      hidTimer?.cancel();
+                                    }
+                                  }
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
+            if (currentSource == DataSourceType.hid) ...[
+              Column(
+                children: [
+                  const Text('振幅強度：', style: TextStyle(fontSize: 14)),
+                  Slider(
+                    value: amplitude,
+                    min: 0.1,
+                    max: 1.0,
+                    divisions: 9,
+                    label: amplitude.toStringAsFixed(2),
+                    onChanged: (value) {
+                      setState(() => amplitude = value);
+                      startHidWaveformTimer();
+                    },
+                  ),
+                  const Text('跳動頻率：', style: TextStyle(fontSize: 14)),
+                  Slider(
+                    value: frequency,
+                    min: 1.0,
+                    max: 5.0,
+                    divisions: 10,
+                    label: frequency.toStringAsFixed(2),
+                    onChanged: (value) {
+                      setState(() => frequency = value);
+                      startHidWaveformTimer();
+                    },
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 10),
           ],
         ),
       ),

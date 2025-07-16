@@ -8,6 +8,10 @@ class WaveformChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (points.isEmpty) {
+      return const Center(child: Text('尚未接收到波形資料'));
+    }
+
     return LineChart(
       LineChartData(
         minX: 0,
