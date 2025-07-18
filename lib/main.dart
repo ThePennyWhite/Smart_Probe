@@ -1,20 +1,21 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:smart_probe_scope/services/usb_hid_detector.dart';
 import 'waveform_chart.dart';
 import 'class/waveform_type.dart';
 import 'class/datasource_type.dart';
-import 'hid_service.dart';
-import 'mock_hid_service.dart';
+import 'services/hid_service.dart';
+import 'services/mock_hid_service.dart';
 
 final HidService hid = HidService();
 final MockHidService mockHidService = MockHidService();
-
-void main() => runApp(const SmartProbeApp());
+void main() => runApp(const MouseMonitorApp());
 
 class SmartProbeApp extends StatefulWidget {
   const SmartProbeApp({super.key});
   @override
+  // ignore: library_private_types_in_public_api
   _SmartProbeAppState createState() => _SmartProbeAppState();
 }
 
@@ -58,13 +59,18 @@ class _SmartProbeAppState extends State<SmartProbeApp> {
     });
   }
 
+  void stopHidWaveformTimer() {
+    hidTimer?.cancel();
+    hidTimer = null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMouseMode = currentSource == DataSourceType.mouse;
 
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('Smart Probe Scope')),
+        appBar: AppBar(title: const Text('Smart Probe')),
         body: Column(
           children: [
             Expanded(
@@ -106,6 +112,7 @@ class _SmartProbeAppState extends State<SmartProbeApp> {
               ),
               child: Row(
                 children: [
+                  const SizedBox(width: 15),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -126,7 +133,7 @@ class _SmartProbeAppState extends State<SmartProbeApp> {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 15),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,7 +164,7 @@ class _SmartProbeAppState extends State<SmartProbeApp> {
                                       if (!ok) return;
                                       startHidWaveformTimer();
                                     } else {
-                                      hidTimer?.cancel();
+                                      stopHidWaveformTimer();
                                     }
                                   }
                                 },
@@ -172,31 +179,47 @@ class _SmartProbeAppState extends State<SmartProbeApp> {
               ),
             ),
             if (currentSource == DataSourceType.hid) ...[
-              Column(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('振幅強度：', style: TextStyle(fontSize: 14)),
-                  Slider(
-                    value: amplitude,
-                    min: 0.1,
-                    max: 1.0,
-                    divisions: 9,
-                    label: amplitude.toStringAsFixed(2),
-                    onChanged: (value) {
-                      setState(() => amplitude = value);
-                      startHidWaveformTimer();
-                    },
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('振幅強度：', style: TextStyle(fontSize: 14)),
+                        Slider(
+                          value: amplitude,
+                          min: 0.1,
+                          max: 1.0,
+                          divisions: 9,
+                          label: amplitude.toStringAsFixed(2),
+                          onChanged: (value) {
+                            setState(() => amplitude = value);
+                            startHidWaveformTimer();
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                  const Text('跳動頻率：', style: TextStyle(fontSize: 14)),
-                  Slider(
-                    value: frequency,
-                    min: 1.0,
-                    max: 5.0,
-                    divisions: 10,
-                    label: frequency.toStringAsFixed(2),
-                    onChanged: (value) {
-                      setState(() => frequency = value);
-                      startHidWaveformTimer();
-                    },
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('跳動頻率：', style: TextStyle(fontSize: 14)),
+                        Slider(
+                          value: frequency,
+                          min: 1.0,
+                          max: 5.0,
+                          divisions: 10,
+                          label: frequency.toStringAsFixed(2),
+                          onChanged: (value) {
+                            setState(() => frequency = value);
+                            startHidWaveformTimer();
+                          },
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -205,6 +228,82 @@ class _SmartProbeAppState extends State<SmartProbeApp> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class MouseMonitorApp extends StatefulWidget {
+  const MouseMonitorApp({super.key});
+
+  @override
+  State<MouseMonitorApp> createState() => _MouseMonitorAppState();
+}
+
+class _MouseMonitorAppState extends State<MouseMonitorApp> {
+  late final UsbHidDetector _detector;
+  bool _mouseConnected = false;
+  final List<String> _log = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _detector = UsbHidDetector(
+      onConnect: (d) {
+        // 判斷是否為 Boot Mouse (usagePage=1, usage=2)
+        final isMouse = d.usagePage == 0x01 && d.usage == 0x02;
+        if (isMouse) {
+          setState(() {
+            _mouseConnected = true;
+            _log.insert(0, '滑鼠接入：VID=${d.vendorId}, PID=${d.productId}');
+          });
+        }
+      },
+      onDisconnect: (d) {
+        final isMouse = d.usagePage == 0x01 && d.usage == 0x02;
+        if (isMouse) {
+          setState(() {
+            _mouseConnected = false;
+            _log.insert(0, '滑鼠拔除：VID=${d.vendorId}, PID=${d.productId}');
+          });
+        }
+      },
+      interval: const Duration(seconds: 1),
+    );
+    _detector.start();
+  }
+
+  @override
+  void dispose() {
+    _detector.stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Mouse Monitor',
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('滑鼠插拔監控'),
+          actions: [
+            Icon(
+              _mouseConnected ? Icons.mouse : Icons.mouse_outlined,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 16),
+          ],
+        ),
+        body: _log.isEmpty
+            ? const Center(child: Text('尚未偵測到滑鼠事件'))
+            : ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: _log.length,
+                itemBuilder: (context, index) {
+                  return Text(_log[index]);
+                },
+              ),
+      ),
+      debugShowCheckedModeBanner: false,
     );
   }
 }

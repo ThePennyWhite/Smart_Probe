@@ -1,7 +1,7 @@
 import 'dart:math';
 import 'dart:ui';
-import 'class/datasource_type.dart';
-import 'class/waveform_type.dart';
+import '../../class/datasource_type.dart';
+import '../../class/waveform_type.dart';
 
 class MockHidService {
   Offset mousePosition = Offset.zero;
