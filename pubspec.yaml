@@ -15,6 +15,9 @@ dependencies:
     git:
       url: https://github.com/TobiasJacob/dartusbhid.git
       ref: master
+  flutter_usb_event: ^1.0.1
+  js: ^0.6.5
+
 
 dev_dependencies:
   flutter_test:
